@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <title>Flappy Bird Klonu</title>
+  <style>
+    body { background: #70c5ce; margin: 0; overflow: hidden; }
+    canvas { display: block; margin: 0 auto; background: #70c5ce; }
+  </style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+// Görseller
+const bgImg = new Image(); bgImg.src = 'succinct.png';
+const duckImg = new Image(); duckImg.src = 'duck.png';
+const eggImg = new Image(); eggImg.src = 'egg1.png';
+const proveImg = new Image(); proveImg.src = 'prove.png';
+const whyGifSrc = 'why.gif';
+let whyGifElements = [];
+let whyGifsShown = false;
+
+// Oyun nesneleri
+const bird = { x: 0, y: 0, size: 0, color: 'yellow', velocity: 0, gravity: 0.5, jump: -8 };
+const eggs = [];
+const pipes = [];
+const pipeWidth = 0.075;
+let pipeGapRatio = 0.45;
+let pipeInterval = Math.floor(135 * 0.8 / 2);
+let frameCount = 0;
+let gameOver = false;
+let score = 0;
+let proveCount = 0;
+let proveFlashes = [];
+let basePipeSpeed = 0.004;
+let maxPipeSpeed = 0.018;
+let pipeSpeed = basePipeSpeed;
+
+function getPipeSpeed() {
+  const t = Math.min(frameCount / (60 * 60), 1);
+  return basePipeSpeed + (maxPipeSpeed - basePipeSpeed) * t;
+}
+
+function resizeCanvas() {
+  let w = window.innerWidth;
+  let h = window.innerHeight;
+  if (w < h) [w, h] = [h, w];
+  canvas.width = w;
+  canvas.height = h;
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+function updateBirdProps() {
+  bird.size = Math.max(canvas.height, canvas.width) * 0.055;
+  bird.x = canvas.width * 0.15;
+  if (bird.y === 0) bird.y = canvas.height / 2 - bird.size / 2;
+}
+updateBirdProps();
+window.addEventListener('resize', updateBirdProps);
+
+function drawBackground() {
+  if (bgImg.complete) {
+    let scale = Math.max(canvas.width / bgImg.width, canvas.height / bgImg.height);
+    let w = bgImg.width * scale;
+    let h = bgImg.height * scale;
+    let x = (canvas.width - w) / 2;
+    let y = (canvas.height - h) / 2;
+    ctx.drawImage(bgImg, x, y, w, h);
+  } else {
+    ctx.fillStyle = '#70c5ce';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+}
+
+function drawBird() {
+  if (duckImg.complete) {
+    ctx.drawImage(duckImg, bird.x, bird.y, bird.size, bird.size);
+  } else {
+    ctx.fillStyle = bird.color;
+    ctx.fillRect(bird.x, bird.y, bird.size, bird.size);
+  }
+}
+
+function drawEggs() {
+  eggs.forEach(egg => {
+    if (!egg.broken && eggImg.complete) {
+      ctx.drawImage(eggImg, egg.x, egg.y, egg.size, egg.size);
+    } else if (egg.broken && eggImg.complete && Date.now() - egg.breakTime < 350) {
+      ctx.drawImage(eggImg, egg.x, egg.y, egg.size, egg.size);
+    }
+  });
+}
+
+function drawPipes() {
+  pipes.forEach(pipe => {
+    let pw = canvas.width * pipeWidth;
+    let gap = canvas.height * pipeGapRatio;
+    // Üst boru
+    let gradTop = ctx.createLinearGradient(pipe.x, 0, pipe.x + pw, pipe.top);
+    gradTop.addColorStop(0, '#FE11C5');
+    gradTop.addColorStop(1, '#fff0fa');
+    ctx.save();
+    ctx.shadowColor = '#FE11C5';
+    ctx.shadowBlur = 16;
+    ctx.fillStyle = gradTop;
+    ctx.fillRect(pipe.x, 0, pw, pipe.top);
+    ctx.restore();
+    // Alt boru
+    let gradBot = ctx.createLinearGradient(pipe.x, pipe.top + gap, pipe.x + pw, canvas.height);
+    gradBot.addColorStop(0, '#fff0fa');
+    gradBot.addColorStop(1, '#FE11C5');
+    ctx.save();
+    ctx.shadowColor = '#FE11C5';
+    ctx.shadowBlur = 16;
+    ctx.fillStyle = gradBot;
+    ctx.fillRect(pipe.x, pipe.top + gap, pw, canvas.height - pipe.top - gap);
+    ctx.restore();
+  });
+}
+
+function drawGround() {
+  ctx.fillStyle = '#90DCFF';
+  ctx.fillRect(0, canvas.height - 40, canvas.width, 40);
+}
+
+function drawProveFlash() {
+  const now = Date.now();
+  for (let i = proveFlashes.length - 1; i >= 0; i--) {
+    const flash = proveFlashes[i];
+    const t = (now - flash.time) / 500;
+    if (t > 1) { proveFlashes.splice(i, 1); continue; }
+    const alpha = 1 - t;
+    const scale = 1 + 0.7 * t;
+    const yOffset = -30 * t;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(flash.x + 30, flash.y + 20 + yOffset);
+    ctx.scale(scale, scale);
+    ctx.drawImage(proveImg, -30, -20, 60, 40);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 20px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('+1 $PROVE', 0, 2);
+    ctx.restore();
+  }
+}
+
+function drawScore() {
+  ctx.fillStyle = 'white';
+  ctx.font = '32px Arial';
+  ctx.fillText(score, 20, 50);
+}
+
+function drawFinalProveScore() {
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 40px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText('SUCCINCT SUMMER', canvas.width/2, canvas.height/2 - 40);
+  ctx.fillText('+' + proveCount + ' $PROVE', canvas.width/2, canvas.height/2 + 40);
+  ctx.textAlign = 'start';
+  ctx.font = 'bold 22px Arial';
+  ctx.fillStyle = '#fff';
+  ctx.fillText('X: 0xCSauron', 20, canvas.height - 20);
+}
+
+function showWhyGifs() {
+  whyGifElements.forEach(el => el.remove());
+  whyGifElements = [];
+  const n = 10 + Math.floor(Math.random()*6);
+  for (let i = 0; i < n; i++) {
+    const img = document.createElement('img');
+    img.src = whyGifSrc;
+    img.style.position = 'fixed';
+    img.style.width = '80px';
+    img.style.height = '80px';
+    img.style.pointerEvents = 'none';
+    let x, y;
+    do {
+      x = Math.random() * (window.innerWidth - 80);
+      y = Math.random() * (window.innerHeight - 80);
+    } while (
+      x > window.innerWidth/2 - 200 && x < window.innerWidth/2 + 120 &&
+      y > window.innerHeight/2 - 120 && y < window.innerHeight/2 + 120
+    );
+    img.style.left = x + 'px';
+    img.style.top = y + 'px';
+    img.style.zIndex = 1000;
+    document.body.appendChild(img);
+    whyGifElements.push(img);
+  }
+}
+function hideWhyGifs() {
+  whyGifElements.forEach(el => el.remove());
+  whyGifElements = [];
+}
+
+function resetGame() {
+  bird.y = canvas.height / 2 - bird.size / 2;
+  bird.velocity = 0;
+  pipes.length = 0;
+  frameCount = 0;
+  score = 0;
+  gameOver = false;
+  eggs.length = 0;
+  proveCount = 0;
+  proveFlashes = [];
+  pipeSpeed = basePipeSpeed;
+  hideWhyGifs();
+  whyGifsShown = false;
+}
+
+function gameLoop() {
+  drawBackground();
+  drawGround();
+  drawBird();
+  drawPipes();
+  drawEggs();
+  drawProveFlash();
+  drawScore();
+
+  if (gameOver) {
+    drawFinalProveScore();
+    if (!whyGifsShown) { showWhyGifs(); whyGifsShown = true; }
+    return;
+  } else {
+    if (whyGifsShown) { hideWhyGifs(); whyGifsShown = false; }
+  }
+
+  bird.velocity += bird.gravity;
+  bird.y += bird.velocity;
+
+  frameCount++;
+  if (frameCount % pipeInterval === 0) {
+    let gap = canvas.height * pipeGapRatio;
+    const top = Math.random() * (canvas.height - gap - 100) + 20;
+    pipes.push({ x: canvas.width, top });
+  }
+
+  pipeSpeed = getPipeSpeed();
+  for (let i = pipes.length - 1; i >= 0; i--) {
+    let pw = canvas.width * pipeWidth;
+    pipes[i].x -= canvas.width * pipeSpeed;
+    if (pipes[i].x + pw === bird.x) { score++; }
+    if (
+      bird.x < pipes[i].x + pw &&
+      bird.x + bird.size > pipes[i].x &&
+      (
+        bird.y < pipes[i].top ||
+        bird.y + bird.size > pipes[i].top + canvas.height * pipeGapRatio
+      )
+    ) { gameOver = true; }
+    if (pipes[i].x + pw < 0) { pipes.splice(i, 1); }
+  }
+
+  eggs.forEach(egg => {
+    if (!egg.broken) {
+      egg.y += egg.velocity;
+      egg.velocity += 0.5;
+      egg.rotation += egg.spin;
+      if (egg.y + egg.size > canvas.height - 40) {
+        egg.broken = true;
+        egg.breakTime = Date.now();
+        proveCount++;
+        const px = Math.random() * (canvas.width - 60);
+        const py = Math.random() * (canvas.height - 120) + 40;
+        proveFlashes.push({x: px, y: py, time: Date.now()});
+      }
+    }
+  });
+  for (let i = eggs.length - 1; i >= 0; i--) {
+    if (eggs[i].broken && Date.now() - eggs[i].breakTime > 350) {
+      eggs.splice(i, 1);
+    }
+  }
+
+  if (bird.y + bird.size > canvas.height - 40) { gameOver = true; }
+  if (bird.y < 0) { bird.y = 0; bird.velocity = 0; }
+
+  requestAnimationFrame(gameLoop);
+}
+
+document.addEventListener('keydown', function(e) {
+  if (e.code === 'Space' || e.code === 'ArrowUp') {
+    e.preventDefault();
+    if (!gameOver) {
+      bird.velocity = bird.jump;
+      eggs.push({
+        x: bird.x + bird.size/2 - 30,
+        y: bird.y + bird.size,
+        size: 60,
+        velocity: 2,
+        rotation: Math.random()*Math.PI,
+        spin: (Math.random()-0.5)*0.2,
+        broken: false,
+        breakTime: 0
+      });
+    } else {
+      resetGame();
+      gameLoop();
+    }
+  }
+});
+
+gameLoop();
+</script>
+</body>
+</html> 
